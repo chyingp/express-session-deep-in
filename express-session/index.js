@@ -87,27 +87,51 @@ function session(options) {
   var opts = options || {}
 
   // get the cookie options
+  // cookie 相关配置，可以参考 “cookie-parser” https://www.npmjs.com/package/cookie-parser
   var cookieOptions = opts.cookie || {}
 
   // get the session id generate function
+  // 生成session id，默认是用 "uid-safe"，也可用自定义算法，前提是生成的id不会冲突。
   var generateId = opts.genid || generateSessionId
 
   // get the session cookie name
+  // session id会存储在cookie里返回给客户端，opts.name 即对应的 cookie 名
   var name = opts.name || opts.key || 'connect.sid'
 
   // get the session store
-  var store = opts.store || new MemoryStore()
+  // 存储session的载体，有多种版本实现，比如存到本地文本文件、redis数据库等。
+  // 如有必要，可以用你熟悉的数据存储方案，只要按照规范实现了预定义的API即可。
+  // 默认是存储在内存（一般用于调试阶段）  
+  var store = opts.store || new MemoryStore()  
 
   // get the trust proxy setting
+  // TODO 目前没有用过
   var trustProxy = opts.proxy
 
   // get the resave session option
+  // 如果是true，即使session没有发生任何改变，也会重新保存到 session store 里
+  // 默认是true，但新的版本里可能会把默认值设置为false
+  // How do I know if this is necessary for my store? 
+  // The best way to know is to check with your store if it implements the touch method. 
+  // If it does, then you can safely set resave: false. 
+  // If it does not implement the touch method and your store sets an expiration date on stored sessions,
+  //  then you likely need resave: true.
+  // TODO 给更准确的定义
   var resaveSession = opts.resave;
 
   // get the rolling session option
+  // 如果为true，那么每个请求都会发送 set-cookie，将 cookie 的过期时间重置到初始的 max-age
+  // 用处：用于延长用户登录态的有效期
+  // 默认：false
+  // 如果 saveUninitialized === false && rolling === true，那么，
+  // 未初始化的 session 不会发送 set-cookie
   var rollingSessions = Boolean(opts.rolling)
 
   // get the save uninitialized session option
+  // 是否保存“未初始化”的session
+  // “未初始化”的定义：新的请求，且未修改过（比如通过 req.session.xx = yy 对session进行修改）
+  // 默认：true（建议不要用默认值，新版本可能会变成 false ）
+  // 备注：如果要实现登录功能，建议设置为false
   var saveUninitializedSession = opts.saveUninitialized
 
   // get the cookie signing secret
@@ -148,8 +172,8 @@ function session(options) {
 
   // notify user that this store is not
   // meant for a production environment
-  /* istanbul ignore next: not tested */
   if ('production' == env && store instanceof MemoryStore) {
+    /* istanbul ignore next: not tested */
     console.warn(warning);
   }
 
@@ -578,13 +602,10 @@ function getcookie(req, name, secrets) {
 
 function hash(sess) {
   return crc(JSON.stringify(sess, function (key, val) {
-    // ignore sess.cookie property
-    if (this === sess && key === 'cookie') {
-      return
+    if (key !== 'cookie') {
+      return val;
     }
-
-    return val
-  }))
+  }));
 }
 
 /**
