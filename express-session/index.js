@@ -65,6 +65,18 @@ var defer = typeof setImmediate === 'function'
   ? setImmediate
   : function(fn){ process.nextTick(fn.bind.apply(fn, arguments)) }
 
+// 备注：
+// 1、sessionId：默认用uid()生成
+// 2、session.id：其实就是 req.sessionId
+
+// 请求到达
+// 
+// 是否初始化过？
+// 
+// 否：
+// 是：
+
+
 /**
  * Setup session store with the given `options`.
  *
@@ -292,16 +304,21 @@ function session(options) {
         return;
       }
 
+      // 是否需要设置cookie
       if (!shouldSetCookie(req)) {
         return;
       }
 
       // only send secure cookies via https
+      // TODO ...
       if (req.session.cookie.secure && !issecure(req, trustProxy)) {
         debug('not secured');
         return;
       }
 
+      // session.touch() 的定义
+      // Updates the .maxAge property. 
+      // Typically this is not necessary to call, as the session middleware does this for you.
       if (!touched) {
         // touch session
         req.session.touch()
@@ -396,12 +413,14 @@ function session(options) {
         touched = true
       }
 
+      // 是否需要保存 session 
       if (shouldSave(req)) {
         req.session.save(function onsave(err) {
           if (err) {
             defer(next, err);
           }
 
+          // 保存后返回
           writeend();
         });
 
@@ -475,21 +494,30 @@ function session(options) {
     }
 
     // check if session has been modified
+    // 
+    // 检查：session是否被修改过，判断依据
+    // 1、sessionId是否发生变化（比如 opts.genId 变化）
+    // 2、hash是否发生变化（比如 hash 算法发生变化）
+    // 
     function isModified(sess) {
       return originalId !== sess.id || originalHash !== hash(sess);
     }
 
     // check if session has been saved
+    // 判断：session是否已经被保存到store里
     function isSaved(sess) {
       return originalId === sess.id && savedHash === hash(sess);
     }
 
     // determine if session should be destroyed
+    // 判断：是否需要销毁session
     function shouldDestroy(req) {
       return req.sessionID && unsetDestroy && req.session == null;
     }
 
     // determine if session should be saved to store
+    // 判断：是否需要把session 保存到 store
+    // 
     function shouldSave(req) {
       // cannot set cookie without a session ID
       if (typeof req.sessionID !== 'string') {
@@ -514,6 +542,18 @@ function session(options) {
     }
 
     // determine if cookie should be set on response
+    // 判断：是否需要在response里面设置cookie
+    // 
+    // 一、如果没有session id，不设置
+    // 
+    // 二、如果 cookieId != req.sessionID （比如是未初始化过的请求，那么 cookieId 为 undefined）
+    // 1、如果 saveUninitializedSession === true，设置
+    // 2、如果“会话被修改过”，比如 
+    //     2.1、前后sessionId不一致 （比如切换了 opts.genId 算法），或者
+    //     2.2  session id 一致但是 hash不一致（比如切换了hash算法）
+    //  那么，设置
+    //  
+    // 三、...
     function shouldSetCookie(req) {
       // cannot set cookie without a session ID
       if (typeof req.sessionID !== 'string') {
@@ -716,7 +756,11 @@ function issecure(req, trustProxy) {
  */
 
 function setcookie(res, name, val, secret, options) {
+  // 格式为 s:xx 
+  // 其中，xx 为 签名后的 sessionId （签名用的secret为 opts.secret）
   var signed = 's:' + signature.sign(val, secret);
+
+  // options 为 cookie的配置项，比如 path、httpOnly 等
   var data = cookie.serialize(name, signed, options);
 
   debug('set-cookie %s', data);
