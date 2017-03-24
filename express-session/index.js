@@ -298,6 +298,7 @@ function session(options) {
     var cookieId = req.sessionID = getcookie(req, name, secrets);
 
     // set-cookie
+    // Execute a listener when a response is about to write headers.
     onHeaders(res, function(){
       if (!req.session) {
         debug('no session');
@@ -386,6 +387,8 @@ function session(options) {
         return ret;
       }
 
+      // 是否需要销毁session
+      // 如需要：1、销毁session 2、返回
       if (shouldDestroy(req)) {
         // destroy session
         debug('destroying');
@@ -402,11 +405,13 @@ function session(options) {
       }
 
       // no session to save
+      // 如果没有session，直接返回
       if (!req.session) {
         debug('no session');
         return _end.call(res, chunk, encoding);
       }
 
+      // 如果还没更新 maxAge，自动更新，并把 touched 置为 true
       if (!touched) {
         // touch session
         req.session.touch()
@@ -414,6 +419,7 @@ function session(options) {
       }
 
       // 是否需要保存 session 
+      // 如需要：save() -> writeTop()，直接返回 -> save() 成功回调 writeend()
       if (shouldSave(req)) {
         req.session.save(function onsave(err) {
           if (err) {
@@ -426,6 +432,8 @@ function session(options) {
 
         return writetop();
       } else if (storeImplementsTouch && shouldTouch(req)) {
+        // store 是否实现了 Session.touch 方法
+        // 如是：touch() -> writetop() -> writeend() -> 返回
         // store implements touch method
         debug('touching');
         store.touch(req.sessionID, req.session, function ontouch(err) {
