@@ -137,10 +137,14 @@ function session(options) {
   // get the cookie signing secret
   var secret = opts.secret
 
+  // opts.genid 比如是函数，否则报错
   if (typeof generateId !== 'function') {
     throw new TypeError('genid option must be a function');
   }
 
+  // opts.resave、opts.saveUninitialized 的默认值可能会变，建议显式声明具体的值
+  // opts.resave ==> 默认true
+  // opts.saveUninitialized ==> 默认true
   if (resaveSession === undefined) {
     deprecate('undefined resave option; provide resave option');
     resaveSession = true;
@@ -151,6 +155,10 @@ function session(options) {
     saveUninitializedSession = true;
   }
 
+  // 跟 Session.destroy(callback) 配置使用，可选的值有 "destroy"、"keep"
+  // destroy => 请求结束时，session 会销毁
+  // keep => 请求结束时，store 里的session会被保存，但请求期间的改动会被忽略（不保存）
+  // TODO 实例 + 细节
   if (opts.unset && opts.unset !== 'destroy' && opts.unset !== 'keep') {
     throw new TypeError('unset option must be "destroy" or "keep"');
   }
@@ -162,6 +170,20 @@ function session(options) {
     throw new TypeError('secret option array must contain one or more strings');
   }
 
+  // secret的作用如下：（逆向操作）
+  // 1、对session id 对应的cookie进行签名
+  // 2、对session id 对应的cookie进行解签名
+  // 
+  // 
+  // 注意，当 secret 为数组时
+  // 1、签名：用数组里的第一个secret
+  // 2、解签名：遍历 secret 数组，直到其中一个解签名成功
+  // 
+  // 备注：为什么设计为数组，以下为猜测
+  // 假设服务已上线，初始secret为secretA，且当前已有用户登录 ==> 用户浏览器已经保存了服务端设置的cookie（签过名的）
+  // 因某些原因，需要更换secret，比如更换成secretB ==> 之前用 secretA 签名cookie 的用户登录态会失效
+  // 采用当前设计，则可平滑过渡，新旧secret签名的cookie都可以正常使用，直到旧会话过期，可以完全废弃 secretA
+  // 
   if (secret && !Array.isArray(secret)) {
     secret = [secret];
   }
@@ -178,16 +200,29 @@ function session(options) {
   }
 
   // generates the new session
+  // 生成新的session，最终的结果
+  // 1、req.sessionId --> session id
+  // 2、req.session --> 对应的session实例
+  // 3、req.session.cookie --> session关联的cookie实例
   store.generate = function(req){
+    
+    // 生成session id
     req.sessionID = generateId(req);
-    req.session = new Session(req);
+
+    // 创建新的session
+    req.session = new Session(req);  
+    
+    // session 相关的cookie实例
+    // 比如要修改cookie的过期时间等，后续可通过 req.session.cookie来操作
     req.session.cookie = new Cookie(cookieOptions);
 
+    // TODO 待探究
     if (cookieOptions.secure === 'auto') {
       req.session.cookie.secure = issecure(req, trustProxy);
     }
   };
 
+  // store 是否实现了 touch方法
   var storeImplementsTouch = typeof store.touch === 'function';
 
   // register event listeners for the store to track readiness
@@ -201,6 +236,7 @@ function session(options) {
 
   return function session(req, res, next) {
     // self-awareness
+    // 已经初始化过 req.session，直接跳过
     if (req.session) {
       next()
       return
@@ -208,6 +244,7 @@ function session(options) {
 
     // Handle connection as if there is no session if
     // the store has temporarily disconnected etc
+    // 异常处理，比如 redis 突然挂了连不上
     if (!storeReady) {
       debug('store is disconnected')
       next()
@@ -215,10 +252,17 @@ function session(options) {
     }
 
     // pathname mismatch
+    // cookie 设置了path，如果当前请求的路径不属于path的范围，直接跳过
+    // 比如：
+    // 1、pathname为 '/oc/v/account/'
+    // 2、cookieOptions.path 为 '/oc/v/hello'
+    // 那么，当前请求没有权限访问相应的cookie，那么直接跳过
     var originalPath = parseUrl.original(req).pathname;
     if (originalPath.indexOf(cookieOptions.path || '/') !== 0) return next();
 
     // ensure a secret is available or bail
+    // 如果没有声明 secret ，直接抛异常 
+    // TODO 例子
     if (!secret && !req.secret) {
       next(new Error('secret option required for sessions'));
       return;
@@ -237,6 +281,8 @@ function session(options) {
     req.sessionStore = store;
 
     // get the session ID from the cookie
+    // 从cookie中获取session id（如果之前已经生成过session id的话）
+    // 如果没有生成过，返回undefined
     var cookieId = req.sessionID = getcookie(req, name, secrets);
 
     // set-cookie
@@ -380,9 +426,17 @@ function session(options) {
 
     // generate the session
     function generate() {
+      
+      // store 本身并没有定义 .generate() 这个方法，在中间件初始化的时候动态添加的方法
       store.generate(req);
+      
       originalId = req.sessionID;
+      
+      // 先将 req.session stringify，再计算循环校验和
       originalHash = hash(req.session);
+      
+      // 把 req.session 的 reload、save 方法包裹一层
+      // 作用：日志打印
       wrapmethods(req.session);
     }
 
@@ -472,6 +526,7 @@ function session(options) {
     }
 
     // generate a session if the browser doesn't send a sessionID
+    // req.sessionID 为undefined，则生成session
     if (!req.sessionID) {
       debug('no SID sent, generating session');
       generate();
@@ -528,6 +583,10 @@ function generateSessionId(sess) {
 
 /**
  * Get the session ID cookie from request.
+ *
+ * 从 请求中获取 session id 对应的 cookie
+ *
+ * 
  *
  * @return {string}
  * @private
@@ -594,6 +653,10 @@ function getcookie(req, name, secrets) {
 
 /**
  * Hash the given `sess` object omitting changes to `.cookie`.
+ *
+ * 算法分两步：
+ * 1、JSON.stringify( sess ) ==> str （将 key 为 cookie 的内容排除）
+ * 2、crc( str ) ==> 计算str的循环校验和
  *
  * @param {Object} sess
  * @return {String}
