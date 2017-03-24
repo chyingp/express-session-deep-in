@@ -513,6 +513,11 @@ function session(options) {
 
     // check if session has been saved
     // 判断：session是否已经被保存到store里
+    // 一般情况下，Session.save 不用主动调用
+    // 
+    // This method is automatically called at the end of the HTTP response if the session data has been altered (though this behavior can be altered with various options in the middleware constructor). 
+    // Because of this, typically this method does not need to be called.
+    // 
     function isSaved(sess) {
       return originalId === sess.id && savedHash === hash(sess);
     }
